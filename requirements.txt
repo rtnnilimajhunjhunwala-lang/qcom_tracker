@@ -1,0 +1,5 @@
+# Blinkit collector + orchestrator need only the Python standard library.
+# These are for the sales-estimation engine and the residential browser collectors.
+pandas>=2.0
+playwright>=1.40      # only needed for Zepto / Instamart (residential runs)
+# After installing playwright, run once:  python3 -m playwright install chromium

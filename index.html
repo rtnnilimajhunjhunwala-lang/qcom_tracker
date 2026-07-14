@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Poppigo · Q-Com Recon</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --navy:#0F1E3E; --navy2:#132444; --ink:#0A1530; --panel:#14264a;
+    --line:#22386a; --coral:#E85D4C; --coral-dim:#c14a3b;
+    --gold:#C9A876; --teal:#3Fb0a0; --mute:#8fa3c9; --text:#EAF0FB; --white:#fff;
+    --good:#3Fb0a0; --warn:#E8B84C; --bad:#E85D4C;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1200px 600px at 80% -10%, #1a2f57 0%, transparent 60%),
+      var(--ink);
+    color:var(--text);
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1240px;margin:0 auto;padding:22px 20px 80px}
+  header{display:flex;align-items:flex-end;justify-content:space-between;
+    border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:22px;flex-wrap:wrap;gap:14px}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .brand h1{font-size:22px;margin:0;font-weight:800;letter-spacing:-.5px}
+  .brand .dot{color:var(--coral)}
+  .brand .sub{color:var(--gold);font-size:11px;letter-spacing:3px;font-weight:700;text-transform:uppercase}
+  .loadbar{display:flex;align-items:center;gap:10px}
+  .drop{border:1.5px dashed var(--line);border-radius:12px;padding:10px 16px;font-size:13px;color:var(--mute);
+    cursor:pointer;transition:.15s;background:rgba(255,255,255,.02)}
+  .drop:hover{border-color:var(--coral);color:var(--text)}
+  .drop b{color:var(--coral)}
+  .meta{font-size:11px;color:var(--mute)}
+  .grid{display:grid;gap:16px}
+  .cards{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
+  .card{background:linear-gradient(180deg,var(--panel),var(--navy2));
+    border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .card .k{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--mute);font-weight:700}
+  .card .v{font-size:30px;font-weight:800;margin-top:6px;letter-spacing:-1px}
+  .card .v small{font-size:14px;color:var(--mute);font-weight:600}
+  .card .foot{font-size:11px;color:var(--mute);margin-top:4px}
+  .section{background:linear-gradient(180deg,var(--panel),var(--navy2));
+    border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-top:18px}
+  .section h2{margin:0 0 3px;font-size:15px;font-weight:800;letter-spacing:-.2px}
+  .section .desc{color:var(--mute);font-size:12px;margin:0 0 16px;line-height:1.5}
+  .lb-row{display:grid;grid-template-columns:210px 1fr 92px;align-items:center;gap:14px;padding:7px 0;
+    border-bottom:1px solid rgba(255,255,255,.04)}
+  .lb-row:last-child{border-bottom:0}
+  .lb-name{font-size:13px;font-weight:600}
+  .lb-name span{color:var(--mute);font-weight:500;font-size:11px}
+  .lb-track{height:20px;background:rgba(255,255,255,.05);border-radius:6px;overflow:hidden;position:relative}
+  .lb-fill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--coral-dim),var(--coral));
+    display:flex;align-items:center;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+  .lb-val{text-align:right;font-variant-numeric:tabular-nums;font-weight:700;font-size:14px}
+  .lb-val small{color:var(--mute);font-weight:500;font-size:10px;display:block}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid rgba(255,255,255,.05);white-space:nowrap}
+  th{color:var(--mute);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;font-weight:700;cursor:pointer;user-select:none}
+  th:hover{color:var(--text)}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+  .pill.ok{background:rgba(63,176,160,.15);color:var(--good)}
+  .pill.low{background:rgba(232,184,76,.15);color:var(--warn)}
+  .pill.oos{background:rgba(232,93,76,.16);color:var(--bad)}
+  .plat{font-size:10px;font-weight:800;letter-spacing:.5px;padding:2px 7px;border-radius:5px}
+  .plat.blinkit{background:#F8CE3B22;color:#F8CE3B}
+  .plat.zepto{background:#7A3FE822;color:#b79bf0}
+  .plat.instamart{background:#E8663322;color:#f0a07e}
+  tr.own td{background:rgba(232,93,76,.07)}
+  .ownbadge{background:var(--coral);color:#fff;font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;margin-left:6px;letter-spacing:.5px}
+  .lb-row.own .lb-name{color:var(--coral)}
+  .lb-row.own .lb-fill{background:linear-gradient(90deg,#C9A876,#E8B84C)}
+  .brandbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .bchip{font-size:11px;padding:4px 10px;border-radius:20px;border:1px solid var(--line);
+    background:rgba(255,255,255,.03);color:var(--mute);cursor:pointer;user-select:none;transition:.12s}
+  .bchip:hover{border-color:var(--coral);color:var(--text)}
+  .bchip.on{background:var(--coral);border-color:var(--coral);color:#fff;font-weight:700}
+  .bchip.own{border-color:var(--gold);color:var(--gold)}
+  .bchip.own.on{background:var(--gold);color:#10203f}
+  .controls{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .ctl{display:flex;flex-direction:column;gap:5px}
+  .ctl label{font-size:11px;color:var(--mute);letter-spacing:.5px}
+  .ctl input[type=range]{width:180px;accent-color:var(--coral)}
+  .ctl .valout{font-weight:700;color:var(--gold)}
+  select{background:var(--navy);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.two{grid-template-columns:1fr}}
+  .empty{text-align:center;color:var(--mute);padding:60px 20px}
+  .empty h3{color:var(--text);font-weight:700}
+  .note{font-size:11px;color:var(--mute);margin-top:12px;line-height:1.5;border-left:2px solid var(--gold);padding-left:12px}
+  canvas{max-height:280px}
+  .chip{font-size:10px;color:var(--mute);border:1px solid var(--line);border-radius:20px;padding:3px 9px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div>
+        <div class="sub">Competitor Recon</div>
+        <h1>Poppigo Q-Com<span class="dot">.</span></h1>
+      </div>
+    </div>
+    <div class="loadbar">
+      <label class="drop" id="drop">Drop <b>snapshots.csv</b> here or click to load
+        <input id="file" type="file" accept=".csv" style="display:none"/>
+      </label>
+      <div class="meta" id="meta">no data loaded</div>
+    </div>
+  </header>
+
+  <div id="app">
+    <div class="empty" id="empty">
+      <h3>Load your snapshots.csv to see the war room</h3>
+      <p>Everything is computed in your browser. Nothing leaves this page.<br>
+      The file is produced by <b>tracker.py</b> and lives in the <b>data/</b> folder.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const F = new Intl.NumberFormat('en-IN');
+const money = n => '₹'+F.format(Math.round(n));
+const DARK = {blinkit:1500, zepto:900, instamart:700};
+let RAW=[], PEN=0.35;
+
+// ---- AUTO-LOAD: try to fetch the CSV sitting next to this page (GitHub Pages) ----
+async function autoload(){
+  const tries=['data/snapshots.csv','snapshots.csv','data/sample_snapshots.csv'];
+  for(const u of tries){
+    try{
+      const r=await fetch(u+'?t='+Date.now());
+      if(!r.ok) continue;
+      const txt=await r.text();
+      if(!txt || txt.length<50) continue;
+      const res=Papa.parse(txt,{header:true,skipEmptyLines:true});
+      const rows=res.data.filter(x=>x.brand_sku);
+      if(!rows.length) continue;
+      RAW=rows; render();
+      document.getElementById('drop').innerHTML=
+        'Live data \u2014 auto-updated. <b>Click to load a different file</b>'+
+        '<input id="file" type="file" accept=".csv" style="display:none"/>';
+      wireFile();
+      return true;
+    }catch(e){}
+  }
+  return false;
+}
+function wireFile(){
+  const f=document.getElementById('file');
+  if(f) f.onchange=e=>{ if(e.target.files[0]) read(e.target.files[0]); };
+  document.getElementById('drop').onclick=()=>document.getElementById('file').click();
+}
+document.addEventListener('DOMContentLoaded',()=>{ autoload(); });
+document.getElementById('drop').onclick=()=>document.getElementById('file').click();
+document.getElementById('file').onchange=e=>{ if(e.target.files[0]) read(e.target.files[0]); };
+['dragover','dragenter'].forEach(ev=>document.getElementById('drop').addEventListener(ev,e=>{e.preventDefault();}));
+document.getElementById('drop').addEventListener('drop',e=>{e.preventDefault(); if(e.dataTransfer.files[0]) read(e.dataTransfer.files[0]);});
+
+function read(file){
+  Papa.parse(file,{header:true,dynamicTyping:false,skipEmptyLines:true,
+    complete:res=>{ RAW=res.data.filter(r=>r.brand_sku); render(); }});
+}
+
+function toNum(x){ const n=parseFloat(x); return isNaN(n)?null:n; }
+
+// --- depletion engine (mirrors estimate_sales.py) ---
+function analyze(rows){
+  // group by platform|brand_sku|size|location
+  const g={};
+  rows.forEach(r=>{
+    const inv=toNum(r.inventory); if(inv===null) return;
+    const key=[r.platform,r.brand_sku,r.size,r.location].join('|');
+    (g[key]=g[key]||[]).push({t:new Date(r.snapshot_ts_ist),inv,price:toNum(r.price),
+      brandName:r.brand,own:String(r.is_own).toLowerCase()==='true'});
+  });
+  const per={}; // platform|brand|size -> {sold, days, restocks, price, stores}
+  Object.entries(g).forEach(([key,arr])=>{
+    arr.sort((a,b)=>a.t-b.t);
+    if(arr.length<2) return;
+    let sold=0,restocks=0;
+    const days=new Set();
+    for(let i=1;i<arr.length;i++){
+      const d=arr[i].inv-arr[i-1].inv;
+      if(d<0) sold+=-d; else if(d>0) restocks++;
+      days.add(arr[i].t.toISOString().slice(0,10));
+    }
+    const [plat,brand,size]=key.split('|');
+    const k2=[plat,brand,size].join('|');
+    const price=arr.map(a=>a.price).filter(x=>x!=null);
+    const avgP=price.length?price.reduce((a,b)=>a+b,0)/price.length:null;
+    if(!per[k2]) per[k2]={plat,brand,size,sold:0,days:new Set(),restocks:0,prices:[],
+      brandName:arr[0].brandName||'',own:!!arr[0].own};
+    per[k2].sold+=sold; per[k2].restocks+=restocks;
+    days.forEach(d=>per[k2].days.add(d));
+    if(avgP)per[k2].prices.push(avgP);
+  });
+  return Object.values(per).map(o=>{
+    const nd=Math.max(1,o.days.size);
+    const upd=o.sold/nd; // units per store per day
+    const price=o.prices.length?o.prices.reduce((a,b)=>a+b,0)/o.prices.length:null;
+    const stores=Math.round((DARK[o.plat]||800)*PEN);
+    const monthly=Math.round(upd*stores*30);
+    return {...o,upd,price,stores,monthly,gmv:price?monthly*price:null,days:nd};
+  });
+}
+
+// latest snapshot state per platform|brand|size
+function latest(rows){
+  const m={};
+  rows.forEach(r=>{
+    const key=[r.platform,r.brand_sku,r.size].join('|');
+    const t=new Date(r.snapshot_ts_ist);
+    if(!m[key]||t>m[key]._t){ m[key]={...r,_t:t}; }
+  });
+  return Object.values(m);
+}
+
+let charts={};
+function render(){
+  document.getElementById('empty').style.display='none';
+  const times=RAW.map(r=>new Date(r.snapshot_ts_ist)).filter(d=>!isNaN(d));
+  const tmin=new Date(Math.min(...times)), tmax=new Date(Math.max(...times));
+  const platforms=[...new Set(RAW.map(r=>r.platform))];
+  const stores=[...new Set(RAW.map(r=>r.merchant_id).filter(Boolean))];
+  const storeTxt = stores.length===1
+    ? `store ${stores[0]}`
+    : `<span style="color:#E8B84C">${stores.length} stores ⚠</span>`;
+  document.getElementById('meta').innerHTML=
+    `${F.format(RAW.length)} rows · ${platforms.join(' · ')} · ${storeTxt} · `+
+    `${tmin.toLocaleDateString('en-IN')}–${tmax.toLocaleDateString('en-IN')}`;
+
+  const ana=analyze(RAW).sort((a,b)=>b.upd-a.upd);
+  const lat=latest(RAW);
+
+  const totMonthly=ana.reduce((s,a)=>s+a.monthly,0);
+  const totGmv=ana.reduce((s,a)=>s+(a.gmv||0),0);
+  const fastest=ana[0];
+  const oos=lat.filter(r=>r.state==='out_of_stock').length;
+  const isOwn=x=>String(x.is_own).toLowerCase()==='true';
+  const ownRows=ana.filter(a=>a.own);
+  const ownUpd=ownRows.length?ownRows.reduce((s,a)=>s+a.upd,0)/ownRows.length:null;
+  const ownRank=ownRows.length?(ana.findIndex(a=>a.own)+1):null;
+  const brands=[...new Set(RAW.map(r=>r.brand).filter(Boolean))].sort();
+
+  document.getElementById('app').innerHTML=`
+    <div class="grid cards">
+      <div class="card" style="border-color:var(--gold)"><div class="k" style="color:var(--gold)">PoppiGo rank</div>
+        <div class="v">${ownRank?('#'+ownRank):'—'}<small> of ${ana.length}</small></div>
+        <div class="foot">${ownUpd!==null?ownUpd.toFixed(1)+' u/store/day · vs leader '+(fastest?fastest.upd.toFixed(1):'—'):'need repeat snapshots'}</div></div>
+      <div class="card"><div class="k">Tracked monthly units</div>
+        <div class="v">${F.format(totMonthly)}<small> est</small></div>
+        <div class="foot">across all tracked SKUs & platforms</div></div>
+      <div class="card"><div class="k">Tracked monthly GMV</div>
+        <div class="v" style="font-size:24px">${money(totGmv)}<small> est</small></div>
+        <div class="foot">at current avg selling price</div></div>
+      <div class="card"><div class="k">Out of stock now</div>
+        <div class="v">${oos}<small> / ${lat.length} SKUs</small></div>
+        <div class="foot">OOS = missed sales / high velocity</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Velocity leaderboard <span style="color:var(--mute);font-weight:500;font-size:12px">— ${ana.length} SKUs, ${brands.length} brands</span></h2>
+      <p class="desc">Units sold per store per day, from live inventory drops. <b>No assumptions — pure observed data, so this is bias-free.</b> Absolute rupee cards use a store-count assumption; this ranking does not. <b style="color:var(--gold)">Gold = PoppiGo.</b></p>
+      <div class="brandbar" id="brandbar"></div>
+      <div id="lb"></div>
+      <div class="note">A single weekly snapshot can't measure this. It needs multiple snapshots across a day (run <b>tracker.py</b> hourly on one measurement day/week). More snapshots = sharper numbers.</div>
+    </div>
+
+    <div class="section">
+      <div class="controls">
+        <div class="ctl">
+          <label>Store-count assumption (affects rupee cards only, NOT the bias-free ranking above)</label>
+          <input type="range" id="pen" min="5" max="80" value="${PEN*100}"/>
+          <div><span class="valout" id="penv">${Math.round(PEN*100)}%</span> <span class="chip">tune to reality</span></div>
+        </div>
+        <div class="ctl">
+          <label>Focus SKU — stock depletion over time</label>
+          <select id="skuSel"></select>
+        </div>
+      </div>
+      <div class="two">
+        <div><canvas id="depChart"></canvas></div>
+        <div><canvas id="monChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Live shelf — latest snapshot</h2>
+      <p class="desc">Most recent price, discount, stock and rating per SKU per platform.</p>
+      <div style="overflow-x:auto">
+      <table id="tbl"><thead><tr>
+        <th data-s="platform">Platform</th><th data-s="brand_sku">Product</th><th data-s="size">Size</th>
+        <th data-s="price" class="num">Price</th><th data-s="mrp" class="num">MRP</th>
+        <th data-s="discount_pct" class="num">Disc%</th><th data-s="inventory" class="num">Stock</th>
+        <th data-s="state">State</th><th data-s="rating" class="num">Rating</th>
+      </tr></thead><tbody></tbody></table>
+      </div>
+    </div>`;
+
+  drawBrandBar(brands);
+  drawLeaderboard(ana);
+  buildTable(lat);
+  fillSkuSelect(ana);
+  drawMonthly(ana);
+  document.getElementById('pen').oninput=e=>{
+    PEN=e.target.value/100; document.getElementById('penv').textContent=Math.round(PEN*100)+'%';
+    const a2=analyze(RAW).sort((x,y)=>y.upd-x.upd); drawMonthly(a2);
+    // refresh cards' monthly/gmv
+    const tm=a2.reduce((s,a)=>s+a.monthly,0), tg=a2.reduce((s,a)=>s+(a.gmv||0),0);
+    document.querySelectorAll('.card .v')[1].innerHTML=F.format(tm)+'<small> est</small>';
+    document.querySelectorAll('.card .v')[2].innerHTML=money(tg)+'<small> est</small>';
+  };
+}
+
+let BRAND_FILTER=new Set();
+function drawBrandBar(brands){
+  const bb=document.getElementById('brandbar');
+  bb.innerHTML=`<div class="bchip ${BRAND_FILTER.size===0?'on':''}" data-b="__all">All brands</div>`+
+    brands.map(b=>`<div class="bchip ${b==='PoppiGo'?'own':''} ${BRAND_FILTER.has(b)?'on':''}" data-b="${b}">${b}</div>`).join('');
+  bb.querySelectorAll('.bchip').forEach(c=>c.onclick=()=>{
+    const b=c.dataset.b;
+    if(b==='__all') BRAND_FILTER.clear();
+    else { BRAND_FILTER.has(b)?BRAND_FILTER.delete(b):BRAND_FILTER.add(b); }
+    drawBrandBar(brands);
+    drawLeaderboard(analyze(RAW).sort((x,y)=>y.upd-x.upd));
+  });
+}
+function drawLeaderboard(ana){
+  const show=BRAND_FILTER.size?ana.filter(a=>BRAND_FILTER.has(a.brandName)):ana;
+  const max=Math.max(...show.map(a=>a.upd),1);
+  document.getElementById('lb').innerHTML=show.map((a,i)=>`
+    <div class="lb-row ${a.own?'own':''}">
+      <div class="lb-name">${a.brand}${a.own?'<span class="ownbadge">YOU</span>':''} <span>${a.size||''} ${a.plat}</span></div>
+      <div class="lb-track"><div class="lb-fill" style="width:${Math.max(3,100*a.upd/max)}%"></div></div>
+      <div class="lb-val">${a.upd.toFixed(1)}<small>u/store/day</small></div>
+    </div>`).join('') || '<div style="color:var(--mute);padding:20px">No SKUs match that filter.</div>';
+}
+
+function buildTable(lat){
+  const tb=document.querySelector('#tbl tbody');
+  const rowsHtml=lat.sort((a,b)=>(a.brand_sku+a.size).localeCompare(b.brand_sku+b.size)).map(r=>{
+    const inv=toNum(r.inventory);
+    let pill='<span class="pill ok">in stock</span>';
+    if(r.state==='out_of_stock'||inv===0)pill='<span class="pill oos">out</span>';
+    else if(inv!==null&&inv<=2)pill='<span class="pill low">low ('+inv+')</span>';
+    const disc=toNum(r.discount_pct);
+    const own=String(r.is_own).toLowerCase()==='true';
+    return `<tr class="${own?'own':''}">
+      <td><span class="plat ${r.platform}">${(r.platform||'').toUpperCase()}</span></td>
+      <td>${r.brand_sku}${own?'<span class="ownbadge">YOU</span>':''}</td><td>${r.size}</td>
+      <td class="num">${r.price?money(toNum(r.price)):'—'}</td>
+      <td class="num" style="color:var(--mute)">${r.mrp?money(toNum(r.mrp)):'—'}</td>
+      <td class="num">${disc?disc.toFixed(0)+'%':'—'}</td>
+      <td class="num">${inv!==null?inv:'—'}</td>
+      <td>${pill}</td>
+      <td class="num">${r.rating||'—'}</td></tr>`;
+  }).join('');
+  tb.innerHTML=rowsHtml;
+  document.querySelectorAll('#tbl th').forEach(th=>th.onclick=()=>sortTable(th.dataset.s));
+}
+let sortDir={};
+function sortTable(col){
+  sortDir[col]=!sortDir[col];
+  const lat=latest(RAW);
+  const num=['price','mrp','discount_pct','inventory','rating'].includes(col);
+  lat.sort((a,b)=>{
+    let x=a[col],y=b[col];
+    if(num){x=toNum(x)||0;y=toNum(y)||0;return sortDir[col]?x-y:y-x;}
+    return sortDir[col]?(''+x).localeCompare(''+y):(''+y).localeCompare(''+x);
+  });
+  buildTableSorted(lat);
+}
+function buildTableSorted(lat){ // avoid re-sorting default
+  const tb=document.querySelector('#tbl tbody');
+  tb.innerHTML=lat.map(r=>{
+    const inv=toNum(r.inventory);
+    let pill='<span class="pill ok">in stock</span>';
+    if(r.state==='out_of_stock'||inv===0)pill='<span class="pill oos">out</span>';
+    else if(inv!==null&&inv<=2)pill='<span class="pill low">low ('+inv+')</span>';
+    const disc=toNum(r.discount_pct);
+    const own=String(r.is_own).toLowerCase()==='true';
+    return `<tr class="${own?'own':''}">
+      <td><span class="plat ${r.platform}">${(r.platform||'').toUpperCase()}</span></td>
+      <td>${r.brand_sku}${own?'<span class="ownbadge">YOU</span>':''}</td><td>${r.size}</td>
+      <td class="num">${r.price?money(toNum(r.price)):'—'}</td>
+      <td class="num" style="color:var(--mute)">${r.mrp?money(toNum(r.mrp)):'—'}</td>
+      <td class="num">${disc?disc.toFixed(0)+'%':'—'}</td>
+      <td class="num">${inv!==null?inv:'—'}</td>
+      <td>${pill}</td><td class="num">${r.rating||'—'}</td></tr>`;
+  }).join('');
+}
+
+function fillSkuSelect(ana){
+  const sel=document.getElementById('skuSel');
+  sel.innerHTML=ana.map((a,i)=>`<option value="${a.plat}|${a.brand}|${a.size}">${a.brand} · ${a.size} · ${a.plat}</option>`).join('');
+  sel.onchange=()=>drawDepletion(sel.value);
+  drawDepletion(sel.value||`${ana[0].plat}|${ana[0].brand}|${ana[0].size}`);
+}
+
+function drawDepletion(key){
+  const [plat,brand,size]=key.split('|');
+  const pts=RAW.filter(r=>r.platform===plat&&r.brand_sku===brand&&r.size===size&&toNum(r.inventory)!==null)
+    .map(r=>({t:new Date(r.snapshot_ts_ist),inv:toNum(r.inventory)}))
+    .sort((a,b)=>a.t-b.t);
+  const labels=pts.map(p=>p.t.toLocaleString('en-IN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}));
+  if(charts.dep)charts.dep.destroy();
+  charts.dep=new Chart(document.getElementById('depChart'),{
+    type:'line',
+    data:{labels,datasets:[{label:'Units in stock',data:pts.map(p=>p.inv),
+      borderColor:'#E85D4C',backgroundColor:'rgba(232,93,76,.12)',fill:true,tension:.3,
+      pointRadius:2,pointBackgroundColor:'#C9A876'}]},
+    options:{plugins:{legend:{labels:{color:'#EAF0FB'}},
+      title:{display:true,text:`${brand} · ${size} — stock depletion (each drop = a sale)`,color:'#8fa3c9',font:{size:12}}},
+      scales:{x:{ticks:{color:'#8fa3c9',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.04)'}},
+        y:{ticks:{color:'#8fa3c9'},grid:{color:'rgba(255,255,255,.06)'},beginAtZero:true}}}
+  });
+}
+
+function drawMonthly(ana){
+  const top=ana.slice(0,9);
+  if(charts.mon)charts.mon.destroy();
+  charts.mon=new Chart(document.getElementById('monChart'),{
+    type:'bar',
+    data:{labels:top.map(a=>a.brand.length>16?a.brand.slice(0,16)+'…':a.brand+' '+a.size),
+      datasets:[{label:'Est. monthly units',data:top.map(a=>a.monthly),
+        backgroundColor:'#3Fb0a0',borderRadius:5}]},
+    options:{indexAxis:'y',plugins:{legend:{display:false},
+      title:{display:true,text:'Estimated monthly units by SKU (tune with slider)',color:'#8fa3c9',font:{size:12}}},
+      scales:{x:{ticks:{color:'#8fa3c9',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'}},
+        y:{ticks:{color:'#EAF0FB',font:{size:10}},grid:{display:false}}}}
+  });
+}
+</script>
+</body>
+</html>
