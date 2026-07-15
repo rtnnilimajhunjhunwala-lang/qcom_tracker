@@ -44,6 +44,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from skus import DARKSTORE_COUNTS, DEFAULT_STORE_PENETRATION
+from depletion import rate_from_series
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CSV_PATH = os.path.join(DATA_DIR, "snapshots.csv")
@@ -67,34 +68,26 @@ def load():
 
 
 def depletion(df):
-    """Per (platform, product, location) compute units sold & restocks from inventory diffs."""
+    """Sales RATE per SKU per store, from clean (non-restock) intervals only."""
     rows = []
-    # CRITICAL: merchant_id is the dark store. Blinkit serves a store based on the
-    # requesting IP, and cloud runners can land on different stores between runs.
-    # Diffing stock across two DIFFERENT stores is meaningless, so the store is a
-    # grouping key -- we only ever compare a store against itself.
     keys = ["platform", "brand_sku", "size", "location", "merchant_id"]
     for key, g in df.dropna(subset=["inventory"]).sort_values("snapshot_ts_ist").groupby(keys):
-        g = g.sort_values("snapshot_ts_ist")
-        inv = g["inventory"].to_numpy()
-        if len(inv) < 2:
+        pts = list(zip(g["snapshot_ts_ist"], g["inventory"]))
+        if len(pts) < 2:
             continue
-        deltas = inv[1:] - inv[:-1]
-        units_sold = int(-deltas[deltas < 0].sum())
-        restock_events = int((deltas > 0).sum())
-        restock_units = int(deltas[deltas > 0].sum())
-        span_hours = (g["snapshot_ts_ist"].iloc[-1] - g["snapshot_ts_ist"].iloc[0]).total_seconds() / 3600
-        n_days = max(1, len(g["date"].unique()))
-        avg_price = g["price"].dropna().mean()
+        r = rate_from_series(pts)
+        if r["confidence"] == "none":
+            continue
         rows.append({
-            "platform": key[0], "brand_sku": key[1], "size": key[2], "location": key[3],
-            "merchant_id": key[4],
-            "snapshots": len(g), "span_hours": round(span_hours, 1),
-            "days_observed": n_days,
-            "units_sold_at_store": units_sold,
-            "restock_events": restock_events, "restock_units": restock_units,
-            "units_per_day_at_store": round(units_sold / n_days, 2),
-            "avg_price": round(avg_price, 1) if pd.notna(avg_price) else None,
+            "platform": key[0], "brand_sku": key[1], "size": key[2],
+            "location": key[3], "merchant_id": key[4],
+            "snapshots": len(g),
+            "units_per_day_at_store": round(r["units_per_day"], 2),
+            "clean_hours": round(r["clean_hours"], 1),
+            "restock_events": r["dirty_intervals"],
+            "coverage": round(r["coverage"], 2),
+            "confidence": r["confidence"],
+            "avg_price": round(g["price"].dropna().mean(), 1) if g["price"].notna().any() else None,
         })
     return pd.DataFrame(rows)
 
@@ -104,10 +97,9 @@ def extrapolate(dep, penetration):
     # Average across sampled locations for each (platform, brand_sku, size)
     agg = (dep.groupby(["platform", "brand_sku", "size"], as_index=False)
               .agg(units_per_day_at_store=("units_per_day_at_store", "mean"),
-                   units_sold_at_store=("units_sold_at_store", "sum"),
                    restock_events=("restock_events", "sum"),
+                   clean_hours=("clean_hours", "sum"),
                    avg_price=("avg_price", "mean"),
-                   span_hours=("span_hours", "max"),
                    snapshots=("snapshots", "max")))
     def stores(p):
         return DARKSTORE_COUNTS.get(p, 800) * penetration

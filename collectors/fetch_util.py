@@ -68,31 +68,31 @@ def _decompress(raw, headers):
     return raw
 
 
-def fetch_html(url, retries=3, timeout=15):
+def fetch_html(url, retries=1, timeout=12, fast=True):
     """
     Return (html_str, note). note == "" on success; otherwise a short reason.
-    Rotates header profiles and retries before giving up.
+    Rotates header profiles. In fast mode (default) it tries each profile once
+    with a short pause -- a hard block fails in seconds instead of minutes.
     """
     last = "unknown"
-    attempt = 0
-    for cycle in range(retries):
+    pause = 0.4 if fast else 1.2
+    for cycle in range(max(1, retries)):
         for prof in _PROFILES:
-            attempt += 1
             try:
-                # Do NOT advertise br (brotli); urllib can't decode it.
                 headers = dict(prof)
-                headers["Accept-Encoding"] = "gzip, deflate"
+                headers["Accept-Encoding"] = "gzip, deflate"   # not brotli
                 req = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     raw = r.read()
                     body = _decompress(raw, r.headers).decode("utf-8", "ignore")
-                    if len(body) > 2000:            # a real product page is big
+                    if len(body) > 2000:
                         return body, ""
                     last = "short_response"
             except urllib.error.HTTPError as e:
                 last = "http_%s" % e.code
             except Exception as e:
                 last = "err_%s" % type(e).__name__
-            time.sleep(1.2)
-        time.sleep(2 + cycle * 2)                   # backoff between full cycles
+            time.sleep(pause)
+        if cycle + 1 < retries:
+            time.sleep(2)
     return "", last

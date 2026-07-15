@@ -129,7 +129,9 @@ let RAW=[], PEN=0.35;
 
 // ---- AUTO-LOAD: try to fetch the CSV sitting next to this page (GitHub Pages) ----
 async function autoload(){
-  const tries=['data/snapshots.csv','snapshots.csv','data/sample_snapshots.csv'];
+  // ONLY ever load real collected data. No sample/demo fallback -- showing
+  // fabricated numbers as if they were real would be worse than showing nothing.
+  const tries=['data/snapshots.csv','snapshots.csv'];
   for(const u of tries){
     try{
       const r=await fetch(u+'?t='+Date.now());
@@ -140,6 +142,7 @@ async function autoload(){
       const rows=res.data.filter(x=>x.brand_sku);
       if(!rows.length) continue;
       RAW=rows; render();
+      window.__loaded=true;
       document.getElementById('drop').innerHTML=
         'Live data \u2014 auto-updated. <b>Click to load a different file</b>'+
         '<input id="file" type="file" accept=".csv" style="display:none"/>';
@@ -154,7 +157,19 @@ function wireFile(){
   if(f) f.onchange=e=>{ if(e.target.files[0]) read(e.target.files[0]); };
   document.getElementById('drop').onclick=()=>document.getElementById('file').click();
 }
-document.addEventListener('DOMContentLoaded',()=>{ autoload(); });
+document.addEventListener('DOMContentLoaded',async ()=>{
+  const ok=await autoload();
+  if(!ok){
+    document.getElementById('empty').innerHTML=
+      '<h3>No data collected yet</h3>'+
+      '<p>The tracker has not saved a snapshot to <b>data/snapshots.csv</b> yet.<br>'+
+      'Go to the <b>Actions</b> tab in GitHub and run <b>Snapshot + publish dashboard</b>, '+
+      'or just wait for the next hourly run.</p>'+
+      '<p style="color:#8fa3c9;font-size:12px;margin-top:18px">'+
+      'This page will never show demo or placeholder numbers. '+
+      'If there is no real data, it shows nothing.</p>';
+  }
+});
 document.getElementById('drop').onclick=()=>document.getElementById('file').click();
 document.getElementById('file').onchange=e=>{ if(e.target.files[0]) read(e.target.files[0]); };
 ['dragover','dragenter'].forEach(ev=>document.getElementById('drop').addEventListener(ev,e=>{e.preventDefault();}));
@@ -167,44 +182,70 @@ function read(file){
 
 function toNum(x){ const n=parseFloat(x); return isNaN(n)?null:n; }
 
-// --- depletion engine (mirrors estimate_sales.py) ---
+// --- depletion engine: MUST match depletion.py exactly ---
+// A restock (stock goes UP) HIDES that interval's sales. Counting it as zero
+// sales would under-count fast-moving brands -- a real bias. So we DROP restock
+// intervals and compute a rate from clean intervals only, then scale to a day.
+const ACTIVE_HOURS=15, MIN_H=0.25, MAX_H=6;
+
+function rateFromSeries(pts){
+  pts=pts.slice().sort((a,b)=>a.t-b.t);
+  let cleanUnits=0, cleanHours=0, dirtyHours=0, dirty=0, intervals=0;
+  for(let i=1;i<pts.length;i++){
+    const h=(pts[i].t-pts[i-1].t)/3600000;
+    if(h<MIN_H||h>MAX_H) continue;
+    intervals++;
+    const delta=pts[i].inv-pts[i-1].inv;
+    if(delta>0){ dirty++; dirtyHours+=h; }      // restock -> unknowable, DROP
+    else { cleanUnits+=-delta; cleanHours+=h; } // clean -> exact
+  }
+  if(cleanHours<=0) return {upd:0,cleanUnits:0,cleanHours:0,dirty,intervals,coverage:0,conf:'none'};
+  const uph=cleanUnits/cleanHours;
+  const tot=cleanHours+dirtyHours;
+  const conf = cleanHours>=40?'high' : cleanHours>=12?'medium' : cleanHours>=3?'low' : 'none';
+  return {upd:uph*ACTIVE_HOURS, cleanUnits, cleanHours, dirty, intervals,
+          coverage: tot? cleanHours/tot : 0, conf};
+}
+
 function analyze(rows){
-  // group by platform|brand_sku|size|location
   const g={};
   rows.forEach(r=>{
     const inv=toNum(r.inventory); if(inv===null) return;
-    const key=[r.platform,r.brand_sku,r.size,r.location].join('|');
+    // merchant_id = the dark store. Never diff stock across DIFFERENT stores.
+    // platform_product_id is the ONLY unique SKU key (names+sizes collide).
+    // merchant_id keeps us from diffing stock across different dark stores.
+    const pid=r.platform_product_id||r.brand_sku;
+    const key=[r.platform,pid,r.location,r.merchant_id||''].join('|');
     (g[key]=g[key]||[]).push({t:new Date(r.snapshot_ts_ist),inv,price:toNum(r.price),
-      brandName:r.brand,own:String(r.is_own).toLowerCase()==='true'});
+      pid, brandName:r.brand, skuName:r.brand_sku, size:r.size,
+      own:String(r.is_own).toLowerCase()==='true'});
   });
-  const per={}; // platform|brand|size -> {sold, days, restocks, price, stores}
+  const per={};
   Object.entries(g).forEach(([key,arr])=>{
-    arr.sort((a,b)=>a.t-b.t);
     if(arr.length<2) return;
-    let sold=0,restocks=0;
-    const days=new Set();
-    for(let i=1;i<arr.length;i++){
-      const d=arr[i].inv-arr[i-1].inv;
-      if(d<0) sold+=-d; else if(d>0) restocks++;
-      days.add(arr[i].t.toISOString().slice(0,10));
-    }
-    const [plat,brand,size]=key.split('|');
-    const k2=[plat,brand,size].join('|');
-    const price=arr.map(a=>a.price).filter(x=>x!=null);
-    const avgP=price.length?price.reduce((a,b)=>a+b,0)/price.length:null;
-    if(!per[k2]) per[k2]={plat,brand,size,sold:0,days:new Set(),restocks:0,prices:[],
-      brandName:arr[0].brandName||'',own:!!arr[0].own};
-    per[k2].sold+=sold; per[k2].restocks+=restocks;
-    days.forEach(d=>per[k2].days.add(d));
-    if(avgP)per[k2].prices.push(avgP);
+    const r=rateFromSeries(arr);
+    if(r.conf==='none') return;                 // honestly not enough data yet
+    const plat=key.split('|')[0];
+    const a0=arr[0];
+    const k2=[plat,a0.pid].join('|');          // roll stores up per unique SKU
+    const prices=arr.map(a=>a.price).filter(x=>x!=null);
+    const avgP=prices.length?prices.reduce((a,b)=>a+b,0)/prices.length:null;
+    if(!per[k2]) per[k2]={plat,brand:a0.skuName,size:a0.size,pid:a0.pid,
+                          upds:[],prices:[],cleanHours:0,restocks:0,
+                          brandName:a0.brandName||'',own:!!a0.own,conf:r.conf,cov:0,n:0};
+    const o=per[k2];
+    o.upds.push(r.upd); o.cleanHours+=r.cleanHours; o.restocks+=r.dirty;
+    o.cov+=r.coverage; o.n++;
+    if(avgP) o.prices.push(avgP);
+    if(r.conf==='high'||o.conf==='none') o.conf=r.conf;
   });
   return Object.values(per).map(o=>{
-    const nd=Math.max(1,o.days.size);
-    const upd=o.sold/nd; // units per store per day
+    const upd=o.upds.reduce((a,b)=>a+b,0)/o.upds.length;  // avg across stores
     const price=o.prices.length?o.prices.reduce((a,b)=>a+b,0)/o.prices.length:null;
     const stores=Math.round((DARK[o.plat]||800)*PEN);
     const monthly=Math.round(upd*stores*30);
-    return {...o,upd,price,stores,monthly,gmv:price?monthly*price:null,days:nd};
+    return {...o,upd,price,stores,monthly,gmv:price?monthly*price:null,
+            coverage:o.n?o.cov/o.n:0};
   });
 }
 
@@ -212,7 +253,8 @@ function analyze(rows){
 function latest(rows){
   const m={};
   rows.forEach(r=>{
-    const key=[r.platform,r.brand_sku,r.size].join('|');
+    // product id is the only unique SKU key (names+sizes collide across listings)
+    const key=[r.platform,r.platform_product_id||r.brand_sku].join('|');
     const t=new Date(r.snapshot_ts_ist);
     if(!m[key]||t>m[key]._t){ m[key]={...r,_t:t}; }
   });
@@ -236,30 +278,65 @@ function render(){
   const ana=analyze(RAW).sort((a,b)=>b.upd-a.upd);
   const lat=latest(RAW);
 
+  // --- data maturity: tells you honestly whether to trust the sales numbers ---
+  const totalClean=ana.reduce((s,a)=>s+a.cleanHours,0);
+  const avgCov=ana.length?ana.reduce((s,a)=>s+a.coverage,0)/ana.length:0;
+  let dqTitle,dqMsg,dqColor,dqBg;
+  if(ana.length===0||totalClean<12){
+    dqTitle='⏳ Too early — sales numbers not meaningful yet';
+    dqMsg='Prices and stock below are exact and usable right now. But measuring SALES needs stock to move across several readings of the same store. Let it collect for a day, then come back — the estimates sharpen every hour.';
+    dqColor='#E8B84C'; dqBg='#2a2416';
+  }else if(totalClean<80){
+    dqTitle='📈 Building — ranking is usable, rates still settling';
+    dqMsg=`${Math.round(totalClean)} clean observation-hours so far. The brand RANKING is already meaningful. Absolute rates will keep firming up over the next few days.`;
+    dqColor='#3Fb0a0'; dqBg='#16262a';
+  }else if(totalClean<300){
+    dqTitle='✅ Good — estimates are reliable';
+    dqMsg=`${Math.round(totalClean)} clean observation-hours. Enough to trust the shelf share and the ranking. Keeps improving as more days accumulate.`;
+    dqColor='#3Fb0a0'; dqBg='#16262a';
+  }else{
+    dqTitle='🎯 Strong — mature dataset';
+    dqMsg=`${Math.round(totalClean)} clean observation-hours across ${ana.length} SKUs. Weekday/weekend patterns and restock cycles have averaged out.`;
+    dqColor='#3Fb0a0'; dqBg='#16262a';
+  }
+  dqMsg += ` Restock windows (${Math.round((1-avgCov)*100)}% of time) are dropped, never counted as zero sales — that's what stops fast-moving brands being under-counted.`;
+
   const totMonthly=ana.reduce((s,a)=>s+a.monthly,0);
   const totGmv=ana.reduce((s,a)=>s+(a.gmv||0),0);
-  const fastest=ana[0];
+  const fastest=ana.length?ana[0]:null;
   const oos=lat.filter(r=>r.state==='out_of_stock').length;
   const isOwn=x=>String(x.is_own).toLowerCase()==='true';
   const ownRows=ana.filter(a=>a.own);
   const ownUpd=ownRows.length?ownRows.reduce((s,a)=>s+a.upd,0)/ownRows.length:null;
   const ownRank=ownRows.length?(ana.findIndex(a=>a.own)+1):null;
+  const hasSales=ana.length>0;
   const brands=[...new Set(RAW.map(r=>r.brand).filter(Boolean))].sort();
 
   document.getElementById('app').innerHTML=`
     <div class="grid cards">
       <div class="card" style="border-color:var(--gold)"><div class="k" style="color:var(--gold)">PoppiGo rank</div>
-        <div class="v">${ownRank?('#'+ownRank):'—'}<small> of ${ana.length}</small></div>
-        <div class="foot">${ownUpd!==null?ownUpd.toFixed(1)+' u/store/day · vs leader '+(fastest?fastest.upd.toFixed(1):'—'):'need repeat snapshots'}</div></div>
+        <div class="v">${ownRank?('#'+ownRank):'—'}${ownRank?`<small> of ${ana.length}</small>`:''}</div>
+        <div class="foot">${ownUpd!==null?ownUpd.toFixed(1)+' u/store/day · vs leader '+(fastest?fastest.upd.toFixed(1):'—'):'waiting for sales data'}</div></div>
       <div class="card"><div class="k">Tracked monthly units</div>
-        <div class="v">${F.format(totMonthly)}<small> est</small></div>
-        <div class="foot">across all tracked SKUs & platforms</div></div>
+        <div class="v">${hasSales?F.format(totMonthly)+'<small> est</small>':'—'}</div>
+        <div class="foot">${hasSales?'across all tracked SKUs':'needs sales data'}</div></div>
       <div class="card"><div class="k">Tracked monthly GMV</div>
-        <div class="v" style="font-size:24px">${money(totGmv)}<small> est</small></div>
-        <div class="foot">at current avg selling price</div></div>
+        <div class="v" style="font-size:24px">${hasSales?money(totGmv)+'<small> est</small>':'—'}</div>
+        <div class="foot">${hasSales?'at current avg selling price':'needs sales data'}</div></div>
       <div class="card"><div class="k">Out of stock now</div>
         <div class="v">${oos}<small> / ${lat.length} SKUs</small></div>
         <div class="foot">OOS = missed sales / high velocity</div></div>
+    </div>
+
+    <div class="section" id="dq" style="border-color:${dqColor};background:linear-gradient(180deg,${dqBg},var(--navy2))">
+      <h2 style="color:${dqColor}">${dqTitle}</h2>
+      <p class="desc" style="margin:0">${dqMsg}</p>
+    </div>
+
+    <div class="section" style="border-color:var(--gold)">
+      <h2>Brand shelf share <span style="color:var(--gold);font-weight:700;font-size:12px">— BIAS-FREE, no assumptions</span></h2>
+      <p class="desc">Of every 100 rupees spent in this category at a dark store, how much goes to each brand. Built <b>only</b> from stock we watched move — no store-count guesses, nothing assumed about who is big. <b style="color:var(--gold)">This is the number to trust. The slider below does not affect it.</b></p>
+      <div id="shelf"></div>
     </div>
 
     <div class="section">
@@ -270,12 +347,12 @@ function render(){
       <div class="note">A single weekly snapshot can't measure this. It needs multiple snapshots across a day (run <b>tracker.py</b> hourly on one measurement day/week). More snapshots = sharper numbers.</div>
     </div>
 
-    <div class="section">
+    <div class="section" id="chartSection" style="${hasSales?'':'display:none'}">
       <div class="controls">
         <div class="ctl">
           <label>Store-count assumption (affects rupee cards only, NOT the bias-free ranking above)</label>
           <input type="range" id="pen" min="5" max="80" value="${PEN*100}"/>
-          <div><span class="valout" id="penv">${Math.round(PEN*100)}%</span> <span class="chip">tune to reality</span></div>
+          <div><span class="valout" id="penv">${Math.round(PEN*100)}%</span> <span class="chip">rough scenario only — shelf share above needs no slider</span></div>
         </div>
         <div class="ctl">
           <label>Focus SKU — stock depletion over time</label>
@@ -301,6 +378,7 @@ function render(){
       </div>
     </div>`;
 
+  drawShelf(ana);
   drawBrandBar(brands);
   drawLeaderboard(ana);
   buildTable(lat);
@@ -314,6 +392,31 @@ function render(){
     document.querySelectorAll('.card .v')[1].innerHTML=F.format(tm)+'<small> est</small>';
     document.querySelectorAll('.card .v')[2].innerHTML=money(tg)+'<small> est</small>';
   };
+}
+
+function drawShelf(ana){
+  // brand-level revenue per store-day -> share. No store counts involved.
+  const by={};
+  ana.forEach(a=>{
+    const b=a.brandName||'?';
+    if(!by[b]) by[b]={brand:b,units:0,rev:0,own:false,skus:0};
+    by[b].units+=a.upd;
+    by[b].rev+=a.upd*(a.price||0);
+    by[b].skus++;
+    if(a.own) by[b].own=true;
+  });
+  const rows=Object.values(by);
+  const totR=rows.reduce((s,r)=>s+r.rev,0)||1;
+  const totU=rows.reduce((s,r)=>s+r.units,0)||1;
+  rows.forEach(r=>{ r.vs=r.rev/totR*100; r.us=r.units/totU*100; });
+  rows.sort((a,b)=>b.vs-a.vs);
+  const max=rows.length?rows[0].vs:1;
+  document.getElementById('shelf').innerHTML=rows.map(r=>`
+    <div class="lb-row ${r.own?'own':''}">
+      <div class="lb-name">${r.brand}${r.own?'<span class="ownbadge">YOU</span>':''} <span>${r.skus} SKU${r.skus>1?'s':''}</span></div>
+      <div class="lb-track"><div class="lb-fill" style="width:${Math.max(2,100*r.vs/max)}%"></div></div>
+      <div class="lb-val">${r.vs.toFixed(1)}%<small>${r.us.toFixed(1)}% of units</small></div>
+    </div>`).join('') || '<div style="color:var(--mute);padding:16px">Not enough snapshots yet — needs stock to move between two readings of the same store.</div>';
 }
 
 let BRAND_FILTER=new Set();
@@ -337,7 +440,10 @@ function drawLeaderboard(ana){
       <div class="lb-name">${a.brand}${a.own?'<span class="ownbadge">YOU</span>':''} <span>${a.size||''} ${a.plat}</span></div>
       <div class="lb-track"><div class="lb-fill" style="width:${Math.max(3,100*a.upd/max)}%"></div></div>
       <div class="lb-val">${a.upd.toFixed(1)}<small>u/store/day</small></div>
-    </div>`).join('') || '<div style="color:var(--mute);padding:20px">No SKUs match that filter.</div>';
+    </div>`).join('') || `<div style="color:var(--mute);padding:20px">${
+      ana.length===0
+        ? 'No sales measured yet. Stock has to move between two readings of the same store — usually visible within a day of hourly runs.'
+        : 'No SKUs match that brand filter.'}</div>`;
 }
 
 function buildTable(lat){
@@ -396,16 +502,21 @@ function buildTableSorted(lat){ // avoid re-sorting default
 
 function fillSkuSelect(ana){
   const sel=document.getElementById('skuSel');
-  sel.innerHTML=ana.map((a,i)=>`<option value="${a.plat}|${a.brand}|${a.size}">${a.brand} · ${a.size} · ${a.plat}</option>`).join('');
+  if(!sel) return;
+  if(!ana.length){ sel.innerHTML='<option>No sales data yet</option>'; return; }
+  sel.innerHTML=ana.map(a=>`<option value="${a.plat}|${a.pid}">${a.brand} · ${a.size||''} · ${a.plat}</option>`).join('');
   sel.onchange=()=>drawDepletion(sel.value);
-  drawDepletion(sel.value||`${ana[0].plat}|${ana[0].brand}|${ana[0].size}`);
+  drawDepletion(sel.value||`${ana[0].plat}|${ana[0].pid}`);
 }
 
 function drawDepletion(key){
-  const [plat,brand,size]=key.split('|');
-  const pts=RAW.filter(r=>r.platform===plat&&r.brand_sku===brand&&r.size===size&&toNum(r.inventory)!==null)
-    .map(r=>({t:new Date(r.snapshot_ts_ist),inv:toNum(r.inventory)}))
+  if(!key||key==='undefined') return;
+  const [plat,pid]=key.split('|');
+  const pts=RAW.filter(r=>r.platform===plat&&(r.platform_product_id||r.brand_sku)===pid&&toNum(r.inventory)!==null)
+    .map(r=>({t:new Date(r.snapshot_ts_ist),inv:toNum(r.inventory),name:r.brand_sku}))
     .sort((a,b)=>a.t-b.t);
+  if(!pts.length) return;
+  const nm=pts[0].name||'';
   const labels=pts.map(p=>p.t.toLocaleString('en-IN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}));
   if(charts.dep)charts.dep.destroy();
   charts.dep=new Chart(document.getElementById('depChart'),{
@@ -414,7 +525,7 @@ function drawDepletion(key){
       borderColor:'#E85D4C',backgroundColor:'rgba(232,93,76,.12)',fill:true,tension:.3,
       pointRadius:2,pointBackgroundColor:'#C9A876'}]},
     options:{plugins:{legend:{labels:{color:'#EAF0FB'}},
-      title:{display:true,text:`${brand} · ${size} — stock depletion (each drop = a sale)`,color:'#8fa3c9',font:{size:12}}},
+      title:{display:true,text:`${nm} — stock over time (each drop = a sale)`,color:'#8fa3c9',font:{size:12}}},
       scales:{x:{ticks:{color:'#8fa3c9',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.04)'}},
         y:{ticks:{color:'#8fa3c9'},grid:{color:'rgba(255,255,255,.06)'},beginAtZero:true}}}
   });
@@ -422,6 +533,8 @@ function drawDepletion(key){
 
 function drawMonthly(ana){
   const top=ana.slice(0,9);
+  const el=document.getElementById('monChart'); if(!el) return;
+  if(!top.length){ if(charts.mon)charts.mon.destroy(); return; }
   if(charts.mon)charts.mon.destroy();
   charts.mon=new Chart(document.getElementById('monChart'),{
     type:'bar',

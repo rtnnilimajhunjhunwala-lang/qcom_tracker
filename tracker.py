@@ -20,7 +20,8 @@ Design
 - Append-only CSV = full history, needed by the sales-estimation engine.
 """
 
-import argparse, csv, os, sys, time
+import argparse, csv, os, sys, time, functools
+print = functools.partial(print, flush=True)  # visible progress in CI
 from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,17 +54,50 @@ def _row(ts, platform, loc_label, sku, pid, data):
 
 
 def collect_blinkit(ts, rows):
+    ok = 0
+    blocked = 0
+    total = sum(1 for s in SKUS if s["ids"].get("blinkit"))
+    hard_block = False
     for loc in LOCATIONS:
+        n = 0
         for sku in SKUS:
             pid = sku["ids"].get("blinkit")
             if not pid:
                 continue
+            n += 1
             data = blinkit.fetch(pid, location=loc)
             rows.append(_row(ts, "blinkit", loc["label"], sku, pid, data))
+            note = data.get("note") or ""
+            if data.get("price") is not None:
+                ok += 1
+            elif note.startswith("http_403"):
+                blocked += 1
             own = "*" if sku.get("is_own") else " "
-            print(f" {own}{sku.get('brand',''):10} {sku['brand_sku'][:40]:40} "
-                  f"₹{str(data.get('price')):>5} stk={str(data.get('inventory')):>3} {data.get('note')}")
-            time.sleep(1.2)
+            print(" %s[%2d/%2d] %-10s %-34s Rs %-5s stk=%-3s %s" % (
+                own, n, total, (sku.get("brand") or "")[:10],
+                sku["brand_sku"][:34], str(data.get("price")),
+                str(data.get("inventory")), note))
+            # EARLY EXIT: if the first 6 all 403, this IP is blocked -- stop grinding
+            if n == 6 and ok == 0 and blocked >= 5:
+                hard_block = True
+                print("")
+                print("  !! BLINKIT IS BLOCKING THIS IP (first 6 SKUs all 403).")
+                print("  !! This is a datacenter-IP block. Cloud collection can't work")
+                print("  !! from here. Data must be collected from a residential IP")
+                print("  !! (your Mac on office wifi). See MAC_SETUP in the guide.")
+                print("  !! Stopping early so the run doesn't hang.")
+                break
+            time.sleep(0.6)
+        if hard_block:
+            break
+
+    print("")
+    print("  SUMMARY: %d OK, %d blocked, of %d SKUs" % (ok, blocked, total))
+    if ok == 0:
+        print("  No data captured. This IP is blocked by Blinkit.")
+    elif blocked > 0:
+        print("  Partial capture -- %d SKUs blocked this run, will retry next hour." % blocked)
+
 
 
 def collect_browser(platform, ts, rows):

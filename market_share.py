@@ -25,6 +25,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from skus import DARKSTORE_COUNTS, DEFAULT_STORE_PENETRATION
+from depletion import rate_from_series
 try:
     from skus import BRAND_PENETRATION
 except ImportError:
@@ -46,26 +47,35 @@ def bar(pct, width=30):
 
 
 def depletion_per_sku(df):
+    """Per SKU per STORE, estimate the sales RATE using clean (non-restock)
+    intervals only. See depletion.py -- this is what removes the restock bias."""
     recs = []
     keys = ["platform", "brand", "brand_sku", "size",
             "platform_product_id", "merchant_id"]
     for key, g in df.sort_values("snapshot_ts_ist").groupby(keys):
-        inv = g["inventory"].to_numpy()
-        if len(inv) < 2:
+        pts = list(zip(g["snapshot_ts_ist"], g["inventory"]))
+        if len(pts) < 2:
             continue
-        d = inv[1:] - inv[:-1]
-        sold = int(-d[d < 0].sum())
-        ndays = max(1, g["day"].nunique())
+        r = rate_from_series(pts)
+        if r["confidence"] == "none":
+            continue                      # honestly not enough data yet
         price = g["price"].dropna().mean()
         recs.append({"platform": key[0], "brand": key[1], "brand_sku": key[2],
                      "size": key[3], "pid": key[4], "merchant_id": key[5],
-                     "units_per_store_day": sold / ndays, "price": price})
+                     "units_per_store_day": r["units_per_day"],
+                     "clean_hours": r["clean_hours"],
+                     "coverage": r["coverage"],
+                     "confidence": r["confidence"],
+                     "price": price})
     s = pd.DataFrame(recs)
     if s.empty:
         return s
+    # average across stores (a SKU seen at 2 stores must not count twice)
     return (s.groupby(["platform", "brand", "brand_sku", "size", "pid"],
                       as_index=False)
               .agg(units_per_store_day=("units_per_store_day", "mean"),
+                   clean_hours=("clean_hours", "sum"),
+                   coverage=("coverage", "mean"),
                    price=("price", "mean")))
 
 
@@ -108,6 +118,22 @@ def main():
     brand["shelf_unit_share"] = (brand["units_psd"] / tot_u * 100) if tot_u else 0
     brand["shelf_value_share"] = (brand["rev_psd"] / tot_r * 100) if tot_r else 0
     brand = brand.sort_values("shelf_value_share", ascending=False).reset_index(drop=True)
+
+    ch = sku["clean_hours"].sum()
+    cov = sku["coverage"].mean() * 100
+    if ch < 12:
+        q = "VERY EARLY -- treat sales as noise, wait for more hours"
+    elif ch < 60:
+        q = "BUILDING -- ranking usable, rates still settling"
+    elif ch < 200:
+        q = "GOOD"
+    else:
+        q = "STRONG"
+    print("\n  DATA QUALITY: %s" % q)
+    print("  %.0f clean observation-hours across %d SKUs | %.0f%% of time usable"
+          % (ch, len(sku), cov))
+    print("  (restock windows are dropped, not counted as zero sales -- that's what")
+    print("   keeps fast-moving brands from being under-counted.)")
 
     print("\n" + "=" * 74)
     print("  BLINKIT PERIOD-PANTY -- SHELF SHARE  (bias-free, observed data only)")
