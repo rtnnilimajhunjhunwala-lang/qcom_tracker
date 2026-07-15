@@ -1,0 +1,18 @@
+Snapshot @ 2026-07-15T17:54:17+05:30  platforms=['blinkit']
+ *[ 1/55] PoppiGo    PoppiGo Period Panty 5X Slimmer Ja Rs None  stk=None http_403
+ *[ 2/55] PoppiGo    PoppiGo Period Panty 5X Slimmer Ja Rs None  stk=None http_403
+  [ 3/55] Azah       Azah Leak Proof Period Panty       Rs None  stk=None http_403
+  [ 4/55] Azah       Azah Leak Proof Period Panty       Rs None  stk=None http_403
+  [ 5/55] Azah       Azah Leak Proof Period Panty - Pac Rs None  stk=None http_403
+  [ 6/55] Azah       Azah Leak Proof Period Panty - Pac Rs None  stk=None http_403
+
+  !! BLINKIT IS BLOCKING THIS IP (first 6 SKUs all 403).
+  !! This is a datacenter-IP block. Cloud collection can't work
+  !! from here. Data must be collected from a residential IP
+  !! (your Mac on office wifi). See MAC_SETUP in the guide.
+  !! Stopping early so the run doesn't hang.
+
+  SUMMARY: 0 OK, 6 blocked, of 55 SKUs
+  No data captured. This IP is blocked by Blinkit.
+
+6 rows appended -> /Users/nilima/Documents/qcom_tracker/data/snapshots.csv

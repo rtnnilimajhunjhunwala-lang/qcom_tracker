@@ -27,6 +27,7 @@ from datetime import datetime, timezone, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from skus import SKUS, LOCATIONS
 from collectors import blinkit
+from collectors import blinkit_browser
 
 IST = timezone(timedelta(hours=5, minutes=30))
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

@@ -1,83 +1,48 @@
-name: Snapshot + publish dashboard
+name: Publish dashboard
 
-# HOURLY, EVERY DAY, 8am-11pm IST (16 snapshots/day).
-#
-# Why hourly and not once a week: sales are measured by watching stock DROP
-# between snapshots. One snapshot a week tells you prices; it tells you nothing
-# about sales. The more often we look, the less we miss (a competitor can sell 4
-# units and get restocked inside an hour -- we'd see none of it if we looked once
-# a day).
-#
-# Why every day and not just Wednesday: GitHub Actions is FREE AND UNLIMITED on
-# public repos, so there is no reason to sample less. Daily data also exposes the
-# weekday/weekend pattern, which one day a week cannot.
-#
-# Why 8am-11pm and not 24h: Q-com dark stores restock overnight. Sampling through
-# the restock window adds noise, not signal.
+# ------------------------------------------------------------------
+# NOTE: Blinkit blocks GitHub's servers (403), so data is NOT collected
+# here. It's collected on a real Mumbai connection by the double-click
+# "Collect Poppigo Data" app on your Mac, which pushes the CSV here.
+# This workflow's ONLY job is to republish the dashboard whenever new
+# data arrives (or on a daily heartbeat).
+# ------------------------------------------------------------------
 on:
+  push:
+    paths:
+      - 'data/**'          # republish whenever the Mac pushes new data
+      - 'dashboard.html'
+      - 'index.html'
+  workflow_dispatch: {}
   schedule:
-    - cron: "30 2-17 * * *"     # hourly, every day, 08:00-23:00 IST
-  workflow_dispatch: {}          # "Run workflow" button in the Actions tab
+    - cron: "30 3 * * *"   # daily heartbeat (rebuild page even if nothing changed)
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
 concurrency:
-  group: tracker
+  group: pages
   cancel-in-progress: false
 
 jobs:
-  snapshot:
+  publish:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install pandas
-        run: pip install pandas
-
-      # NOTE: GitHub runners are datacenter IPs, so this reads Blinkit's DEFAULT
-      # dark store, not a Mumbai one. That's fine -- it's a consistent sample, so
-      # the brand RANKING is valid. Zepto/Instamart block datacenter IPs entirely.
-      - name: Collect Blinkit snapshot (all SKUs)
-        run: python3 tracker.py --only blinkit
-
-      - name: Recompute sales estimates
-        run: python3 estimate_sales.py || true
-
-      - name: Recompute market share
-        run: python3 market_share.py || true
-
-      - name: Save data back to repo
-        run: |
-          git config user.name  "qcom-tracker-bot"
-          git config user.email "bot@users.noreply.github.com"
-          git add data/*.csv
-          git commit -m "snapshot $(date -u +%Y-%m-%d\ %H:%M)Z" || echo "no changes"
-          git push
-
-      - name: Build dashboard site
+      - name: Build site
         run: |
           mkdir -p _site/data
           cp dashboard.html _site/index.html
           cp data/snapshots.csv     _site/data/ 2>/dev/null || true
           cp data/market_share.csv  _site/data/ 2>/dev/null || true
           cp data/estimates.csv     _site/data/ 2>/dev/null || true
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
-
-  publish:
-    needs: snapshot
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
       - id: deploy
         uses: actions/deploy-pages@v4

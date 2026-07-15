@@ -36,8 +36,9 @@ def main():
             print("  This is intermittent and IP-based. Try:")
             print("    1. Wait 2-3 minutes and run again.")
             print("    2. Turn wifi off/on (new IP from your router), retry.")
-            print("    3. It does NOT affect the cloud (GitHub) runs -- those are")
-            print("       the main data source and keep working regardless.")
+            print("    3. The tracker auto-switches to browser mode when this")
+            print("       happens, which gets past the block -- so collection")
+            print("       still works even when this quick check shows 403.")
         else:
             print("  Check your internet connection and try again.")
         print("")
